@@ -1,0 +1,220 @@
+---
+title: "social data science assessment"
+output: pdf_document
+---
+# Read data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+getwd()
+#setwd("C:/Users/Shehzadi_Aziz/OneDrive - University of Warwick/Documents/Coding_text_files")
+kamh <- file.choose()
+kamh <- read.csv(kamh)
+str(kamh)
+```
+# Build corpus 
+```{r}
+library(tm)
+# convert to utf 8 
+kh <- iconv(kamh$Text, to= "utf-8")
+kh <- Corpus(VectorSource(kh))
+inspect(kh[1:5])
+```
+
+# Clean Data: Code inspiration is taken from https://www.red-gate.com/simple-talk/sql/bi/text-mining-and-sentiment-analysis-with-r/ 
+```{r}
+kh <- tm_map(kh, tolower)
+inspect(kh[1:5])
+
+kh <- tm_map(kh, removePunctuation)
+inspect(kh[1:5])
+
+kh <- tm_map(kh, removeNumbers)
+inspect(kh[1:5])
+
+# replace "/" "@" and "|" with space 
+
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+kh <- tm_map(kh, toSpace, "/")
+kh <- tm_map(kh, toSpace, "@")
+kh <- tm_map(kh, toSpace, "\\|")
+
+# remove whitespaces
+kh <- tm_map(kh, stripWhitespace)
+# remove common words
+cleans <- tm_map(kh, removeWords, stopwords('english'))
+inspect(cleans[1:3])
+
+# text stemming, which reduces words to their root form
+# don't run this code if you want the full words
+kh <- tm_map(cleans, stemDocument)
+# term document matrix
+dtm <- TermDocumentMatrix(cleans)
+dtm
+dtm <- as.matrix(dtm)
+dtm[1:10, 1:20]
+
+# remove the obvious words
+cleans <- tm_map(cleans, removeWords, c('kamala','harri','harris'))
+```
+
+# Begin Topic Modelling 
+```{r topic models}
+library(topicmodels)
+# Create Document Term Matrix 
+dtmi <- DocumentTermMatrix(cleans)
+#sum by raw each raw of the table and get rid of any blank rows 
+raw.sum=apply(dtmi,1,FUN=sum)
+dtmi=dtmi[raw.sum!=0,]
+# create an LDA object with the document term matrix of the text 
+# set seed and k means at random number (of topics)
+# LDA explains how the words fit with certain topics 
+dtmi_lda <- LDA(dtmi, k = 12, control = list(seed=1234))
+dtmi_lda
+# use tidy() method from tidytext package to extract the per-topic-per-word
+# probabilities 
+library(tidytext)
+dtmi_topics <- tidy(dtmi_lda, matrix="beta")
+# print the probability that the term will be in topic 
+dtmi_topics
+```
+
+# Display topic model 
+```{r display}
+library(dplyr)
+library(ggplot2)
+# Find terms most associated with each topic
+dtmi_top_terms <- dtmi_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+# Display most common terms (10) in different topic graphs 
+dtmi_top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+
+dtmi_top_terms
+```
+
+# Examine a document to see what topic it is largely about
+```{r check what the most common words in one document}
+tidy(dtmi) %>%
+  filter(document == 7) %>%
+  arrange(desc(count))
+```
+
+# Sentiment Analysis
+```{r}
+# text stemming to extract root words 
+# text stemming, which reduces words to their root form
+# don't run this code if you want the full words
+kh <- tm_map(cleans, stemDocument)
+# term document matrix
+mtd <- TermDocumentMatrix(kh)
+mtd
+mtd <- as.matrix(mtd)
+mtd[1:10, 1:20]
+```
+# Find most frequently used terms
+```{r}
+dtm <- TermDocumentMatrix(cleans)
+dtm
+dtm <- as.matrix(dtm)
+kh_v <- sort(rowSums(dtm), decreasing=TRUE)
+doc_d <- data.frame(word = names(kh_v),freq=kh_v)
+head(doc_d, 20)
+```
+
+# Create word cloud - code from https://www.red-gate.com/simple-talk/sql/bi/text-mining-and-sentiment-analysis-with-r/ 
+```{r}
+library(wordcloud)
+set.seed(1234)
+wordcloud(words = doc_d$word, freq = doc_d$freq, min.freq = 40,
+          max.words=200, random.order=FALSE, rot.per=0.400,
+          colors=brewer.pal(8, "Dark2"))
+```
+
+# Find sentiment scores code inspiration is taken from https://www.red-gate.com/simple-talk/sql/bi/text-mining-and-sentiment-analysis-with-r/ 
+```{r}
+#using the syuzhet method 
+text <- readLines(file.choose())
+library(syuzhet)
+viv <- get_sentiment(text, method="syuzhet")
+# See first row of vector 
+head(viv)
+# see summary of vector 
+summary(viv) 
+# the minimum sentiment score for each line in the dataset is -6.35 but the median, LQ and UQ are all zero
+# the mean is 0.002418 so still very close to zero indicating that sentiment is mostly neutral according to the syuzhet package
+sum(viv)
+# get sentiment from bing method 
+bing_vector <- get_sentiment(text, method = "bing")
+head(bing_vector)
+summary(bing_vector)
+sum(bing_vector)
+# but although the LQ, UQ and median are the same for the bing method scale, the mean is -0.1156, indicating more negative sentiment. This may be because the bing lexicon contains more negative words that can be seen in this dataset
+# get sentiment from afinn method, which has a larger score range, hence the larger numbers
+afinn_vector <- get_sentiment(text, method="afinn")
+head(afinn_vector)
+summary(afinn_vector)
+sum(afinn_vector)
+# get sentiment scores from nrc vector
+nrc_vector <- get_sentiment(text, method = "nrc", lang="english")
+head(nrc_vector)
+summary(nrc_vector)
+sum(nrc_vector)
+
+# print mean of each vector
+mean(viv)
+mean(bing_vector)
+mean(afinn_vector)
+mean(nrc_vector)
+mean(viv + bing_vector + afinn_vector + nrc_vector)
+# convert every score to a universal scale where negative numbers are -1 and positive numbers are +1 and zeros remain
+rbind(
+  sign(head(viv)),
+  sign(head(bing_vector)),
+  sign(head(afinn_vector)),
+  sign(head(nrc_vector))
+)
+# calculate standard deviation for each score 
+# the variance away from the mean for each score apart from syuzhet is more than 1 standard deviation above the mean, suggesting that variance is high and so mean sentiment score is not that representative of the dataset, meaning there is not enough scope for accepting the hypothesis 
+sd(viv)
+sd(bing_vector)
+sd(afinn_vector)
+sd(nrc_vector)
+```
+# Create emotion detector using NRC lexicon - code for visualisation is taken from https://www.red-gate.com/simple-talk/sql/bi/text-mining-and-sentiment-analysis-with-r/ 
+```{r}
+senti <- get_nrc_sentiment(text)
+# head(d,10) - to see top 10 lines of the get_nrc_sentiment dataframe
+# goes through every row of the csv file 
+head (senti,10)
+#transpose
+# code for following is taken from https://www.red-gate.com/simple-talk/sql/bi/text-mining-and-sentiment-analysis-with-r/ 
+td<-data.frame(t(senti))
+#The function rowSums computes column sums across rows for each level of a grouping variable.
+td_new <- data.frame(rowSums(td[2:6970]))
+#Transformation and cleaning
+names(td_new)[1] <- "count"
+td_new <- cbind("sentiment" = rownames(td_new), td_new)
+rownames(td_new) <- NULL
+td_new2<-td_new[1:8,]
+#Plot One - count of words associated with each sentiment
+library(ggplot2)
+quickplot(sentiment, data=td_new2, weight=count, geom="bar", fill=sentiment, ylab="count")+ggtitle("Tweet sentiment")
+```
+# #Plot two - count of words associated with each sentiment, expressed as a percentage. Code is from https://www.red-gate.com/simple-talk/sql/bi/text-mining-and-sentiment-analysis-with-r/ 
+```{r}
+barplot(
+  sort(colSums(prop.table(senti[, 9:10]))), 
+  horiz = TRUE, 
+  cex.names = 0.7, 
+  las = 1, 
+  main = "Emotions in Text", xlab="Percentage"
+)
+```
